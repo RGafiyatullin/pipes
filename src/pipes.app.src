@@ -1,0 +1,9 @@
+{application, pipes,
+ [
+  {description, ""},
+  {vsn, "0.0.1"},
+  {registered, []},
+  {applications, []},
+  {env, []},
+  {mod, { pipes_app, [] }}
+ ]}.
