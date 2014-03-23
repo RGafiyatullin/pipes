@@ -1,7 +1,8 @@
 -module (pipes_mgr).
 -behaviour (gen_server).
 -export ([start_link/0]).
--export ([pipe_start/4]).
+-export ([tx_start/4]).
+-export ([rx_start/5]).
 -export ([
 		init/1,
 		handle_call/3,
@@ -17,10 +18,15 @@ start_link() -> gen_server:start_link( {local, ?MODULE}, ?MODULE, {}, [] ).
 
 -type sup_start_child_error() :: term().
 -type pipe_start_error() :: already_started | sup_start_child_error().
--spec pipe_start( atom(), node(), atom(), term() ) -> {ok, pid()} | {error, pipe_start_error()}.
-pipe_start( Name, RemoteNode, Mod, ModArg )
+-spec tx_start( atom(), node(), atom(), term() ) -> {ok, pid()} | {error, pipe_start_error()}.
+tx_start( Name, RemoteNode, Mod, ModArg )
 	when is_atom( Name ) andalso is_atom( RemoteNode ) andalso is_atom( Mod )
-	-> gen_server:call( ?MODULE, {pipe_start, Name, RemoteNode, Mod, ModArg} ).
+	-> gen_server:call( ?MODULE, {tx_start, Name, RemoteNode, Mod, ModArg} ).
+
+-spec rx_start( pid(), atom(), node(), atom(), term() ) -> {ok, pid()} | {error, pipe_start_error()}.
+rx_start( TxPid, Name, RemoteNode, Mod, ModArg )
+	when is_pid(TxPid) andalso is_atom( Name ) andalso is_atom( RemoteNode ) andalso is_atom( Mod )
+	-> gen_server:call( ?MODULE, {rx_start, TxPid, Name, RemoteNode, Mod, ModArg} ).
 
 %%% gen_server %%%
 
@@ -36,9 +42,13 @@ pipe_start( Name, RemoteNode, Mod, ModArg )
 init( {} ) ->
 	{ok, #s{}}.
 
-handle_call( {pipe_start, Name, RemoteNode, Mod, ModArg}, GenReplyTo, State )
+handle_call( {tx_start, Name, RemoteNode, Mod, ModArg}, GenReplyTo, State )
 	when is_atom(Name) andalso is_atom( RemoteNode ) andalso is_atom( Mod )
-	-> handle_call_pipe_start( Name, RemoteNode, Mod, ModArg, GenReplyTo, State );
+	-> handle_call_tx_start( Name, RemoteNode, Mod, ModArg, GenReplyTo, State );
+
+handle_call( {rx_start, TxPid, Name, RemoteNode, Mod, ModArg}, GenReplyTo, State )
+	when is_pid(TxPid) andalso is_atom(Name) andalso is_atom( RemoteNode ) andalso is_atom( Mod )
+	-> handle_call_rx_start( TxPid, Name, RemoteNode, Mod, ModArg, GenReplyTo, State );
 
 handle_call( Req, GenReplyTo, State ) ->
 	error_logger:warning_report([
@@ -49,20 +59,19 @@ handle_call( Req, GenReplyTo, State ) ->
 handle_cast( Req, State ) ->
 	error_logger:warning_report([
 		?MODULE, handle_cast, unexpected, {req, Req} ]),
-	{reply, badarg, State}.
+	{noreply, State}.
 
 handle_info( Req, State ) ->
 	error_logger:warning_report([
 		?MODULE, handle_info, unexpected, {req, Req} ]),
-	{reply, badarg, State}.
+	{noreply, State}.
 
 terminate( _Reason, _State ) -> ignore.
 code_change( _OldVsn, State, _Extra ) -> {ok, State}.
 
 %%% Internal %%%
 
-
-handle_call_pipe_start( PipeName, RemoteNode, Mod, ModArg, _GenReplyTo, State = #s{ pipes = Ps0 } )  ->
+handle_call_tx_start( PipeName, RemoteNode, Mod, ModArg, _GenReplyTo, State = #s{ pipes = Ps0 } )  ->
 	case dict:find( PipeName, Ps0 ) of
 		{ok, #pipe{}} -> {reply, {error, already_started}, State};
 		error ->
@@ -75,3 +84,15 @@ handle_call_pipe_start( PipeName, RemoteNode, Mod, ModArg, _GenReplyTo, State = 
 					{reply, {error, StartError}, State}
 			end
 	end.
+
+handle_call_rx_start( TxPid, Name, RemoteNode, Mod, ModArg, _GenReplyTo, State ) ->
+	case pipes_sup:rx_start_child( TxPid, Name, RemoteNode, Mod, ModArg ) of
+		{ok, RxPid} -> {reply, {ok, RxPid}, State};
+		{error, StartError} ->
+			error_logger:error_report([ ?MODULE, handle_call_rx_start,
+				{name, Name}, {remote_node, RemoteNode},
+				{mod, Mod}, {mod_arg, ModArg},
+				{rx_start_error, StartError} ]),
+			{reply, {error, StartError}, State}
+	end.
+

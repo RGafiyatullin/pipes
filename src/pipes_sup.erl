@@ -2,6 +2,7 @@
 -behaviour (supervisor).
 -export ([start_link/0, start_link_rx_sup/0, start_link_tx_sup/0]).
 -export ([tx_start_child/4]).
+-export ([rx_start_child/5]).
 -export ([init/1]).
 
 -define( sup, ?MODULE ).
@@ -21,6 +22,9 @@ tx_start_child( Name, RemoteNode, Mod, ModArg ) ->
 		{ pipes_tx_srv, start_link, [ Name, RemoteNode, Mod, ModArg ] }, 
 		permanent, 1000, worker, [ pipes_tx_srv ] } ).
 
+-spec rx_start_child( pid(), atom(), node(), atom(), term() ) -> {ok, pid()} | {error, sup_start_child_error()}.
+rx_start_child( TxPid, Name, RemoteNode, Mod, ModArg ) ->
+	supervisor:start_child( ?rx_sup, [ TxPid, Name, RemoteNode, Mod, ModArg ] ).
 
 %%% supervisor %%%
 
@@ -39,5 +43,7 @@ init_sup() ->
 	}}.
 
 init_tx_sup() -> {ok, { {one_for_one, 3, 10}, [] }}.
-init_rx_sup() -> {ok, { {one_for_one, 3, 10}, [] }}.
+init_rx_sup() -> {ok, { {simple_one_for_one, 0, 1}, [
+		{rx, {pipes_rx_srv, start_link, []}, temporary, brutal_kill, worker, [  ]}
+	] }}.
 
