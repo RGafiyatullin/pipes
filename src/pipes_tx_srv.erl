@@ -2,7 +2,8 @@
 -behaviour (gen_server).
 -export([start_link/4]).
 -export ([
-		cast_start_rx/1
+		cast_start_rx/1,
+		pass/2
 	]).
 -export ([
 		init/1,
@@ -21,6 +22,9 @@ start_link( Name, RemoteNode, Mod, ModArg )
 -spec cast_start_rx( Tx :: pid() ) -> ok.
 cast_start_rx( Tx ) -> gen_server:cast( Tx, start_rx ).
 
+-spec pass( Tx :: atom() | pid(), Msg :: term() ) -> ok.
+pass( Tx, Msg ) when is_pid( Tx ) orelse is_atom( Tx ) -> gen_server:call( Tx, {pass, Msg}, infinity ).
+
 
 %%% gen_server %%%
 
@@ -28,7 +32,7 @@ cast_start_rx( Tx ) -> gen_server:cast( Tx, start_rx ).
 		name :: atom(),
 		node :: node(),
 
-		pobox :: pid(),
+		% pobox :: pid(),
 
 		rx_pid :: undefined | pid(),
 		rx_mon_ref :: undefined | reference(),
@@ -41,18 +45,20 @@ cast_start_rx( Tx ) -> gen_server:cast( Tx, start_rx ).
 init( {Name, RemoteNode, Mod, ModArg} ) ->
 	case Mod:tx_init( ModArg ) of
 		{ok, ModState0} ->
-			{PoboxSize, PoboxType} = run_opt_callback( Mod, tx_pobox_props, [ModState0], {128, queue} ),
-			{ok, Pobox} = pobox:start_link(
-				{local, Name}, self(),
-				PoboxSize, PoboxType, passive ),
+			% {PoboxSize, PoboxType} = run_opt_callback( Mod, tx_pobox_props, [ModState0], {128, queue} ),
+			% {ok, Pobox} = pobox:start_link(
+			% 	{local, Name}, self(),
+			% 	PoboxSize, PoboxType, passive ),
 
 			ok = cast_start_rx( self() ),
+			ok = pipes_registry:register_tx( Name, self() ),
+			register( Name, self() ),
 
 			{ok, #s{
 				name = Name,
 				node = RemoteNode,
 
-				pobox = Pobox,
+				% pobox = Pobox,
 
 				mod = Mod,
 				mod_arg = ModArg,
@@ -61,6 +67,9 @@ init( {Name, RemoteNode, Mod, ModArg} ) ->
 
 		{error, InitError} -> {error, InitError}
 	end.
+
+handle_call( {pass, Msg}, GenReplyTo, State ) ->
+	handle_call_pass( Msg, GenReplyTo, State );
 
 handle_call( Req, GenReplyTo, State ) ->
 	error_logger:warning_report([
@@ -134,6 +143,12 @@ handle_info_rx_down( RxDownReason, State = #s{ mod_s = ModS0, mod = Mod } ) ->
 	cast_start_rx( self() ),
 	{noreply, State #s{ mod_s = ModS1, rx_pid = undefined, rx_mon_ref = undefined }}.
 
+handle_call_pass( _Msg, _GenReplyTo, State = #s{ rx_pid = undefined } ) ->
+	{reply, {error, rx_down}, State};
+handle_call_pass( Msg, _GenReplyTo, State = #s{ rx_pid = Rx } ) when is_pid( Rx ) ->
+	Rx ! {msg, self(), Msg},
+	{reply, ok, State}.
+
 %%% Internal %%%
 
 handle_cast_start_rx_retry( In, State ) ->
@@ -141,15 +156,15 @@ handle_cast_start_rx_retry( In, State ) ->
 	timer:apply_after( In, ?MODULE, cast_start_rx, [ self() ] ),
 	{noreply, State}.
 
-run_opt_callback( Mod, Func, Args, Default ) ->
-	Exports = 
-		try Mod:module_info(exports)
-		catch error:undef -> [] end,
-	LookingFor = {Func, length(Args)},
-	case [ found || LF <- Exports, LF == LookingFor ] of
-		[] -> Default;
-		[found] -> erlang:apply( Mod, Func, Args )
-	end.
+% run_opt_callback( Mod, Func, Args, Default ) ->
+% 	Exports = 
+% 		try Mod:module_info(exports)
+% 		catch error:undef -> [] end,
+% 	LookingFor = {Func, length(Args)},
+% 	case [ found || LF <- Exports, LF == LookingFor ] of
+% 		[] -> Default;
+% 		[found] -> erlang:apply( Mod, Func, Args )
+% 	end.
 
 
 

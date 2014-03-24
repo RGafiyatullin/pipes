@@ -19,15 +19,26 @@ start_link( TxPid, Name, RemoteNode, Mod, ModArg )
 
 -record(s, {
 		tx_pid :: pid(),
-		tx_mon_ref :: reference()
+		tx_mon_ref :: reference(),
+
+		mod :: atom(),
+		mod_s :: term()
 	}).
 
-init( {TxPid, _Name, _RemoteNode, _Mod, _ModArg} ) ->
+init( {TxPid, _Name, _RemoteNode, Mod, ModArg} ) ->
 	TxMonRef = erlang:monitor( process, TxPid ),
-	{ok, #s{
-		tx_pid = TxPid,
-		tx_mon_ref = TxMonRef
-	}}.
+	case Mod:rx_init( ModArg ) of
+		{ok, ModS0} ->
+			{ok, #s{
+				tx_pid = TxPid,
+				tx_mon_ref = TxMonRef,
+
+				mod = Mod,
+				mod_s = ModS0
+			}};
+
+		{error, Error} -> {error, Error}
+	end.
 
 handle_call( Req, GenReplyTo, State ) ->
 	error_logger:warning_report([
@@ -40,8 +51,18 @@ handle_cast( Req, State ) ->
 		?MODULE, handle_cast, unexpected, {req, Req} ]),
 	{noreply, State}.
 
-handle_info( {'DOWN', TxMonRef, process, TxPid, _Reason}, State = #s{ tx_pid = TxPid, tx_mon_ref = TxMonRef } ) ->
-	{stop, tx_down, State};
+handle_info( {msg, TxPid, Msg}, State = #s{ tx_pid = TxPid } ) ->
+	handle_info_msg( Msg, State );
+
+handle_info(
+	{'DOWN', TxMonRef, process, TxPid, Reason},
+	State = #s{ tx_pid = TxPid, tx_mon_ref = TxMonRef }
+) ->
+	case Reason of
+		normal -> {stop, normal, State};
+		shutdown -> {stop, shutdown, State};
+		_ -> {stop, {tx_down, Reason}, State}
+	end;
 
 handle_info( Req, State ) ->
 	error_logger:warning_report([
@@ -52,5 +73,9 @@ terminate( _Reason, _State ) -> ignore.
 code_change( _OldVsn, State, _Extra ) -> {ok, State}.
 
 %%% Handlers %%%
+
+handle_info_msg( Msg, State = #s{ mod = Mod, mod_s = ModS0 } ) ->
+	ModS1 = Mod:rx_msg_in( Msg, ModS0 ),
+	{noreply, State #s{ mod_s = ModS1 }}.
 
 %%% Internal %%%
