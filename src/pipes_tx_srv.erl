@@ -22,7 +22,8 @@ start_link( Name, RemoteNode, Mod, ModArg )
 -spec cast_start_rx( Tx :: pid() ) -> ok.
 cast_start_rx( Tx ) -> gen_server:cast( Tx, start_rx ).
 
--spec pass( Tx :: atom() | pid(), Msg :: term() ) -> ok.
+-type pass_error() :: rx_down.
+-spec pass( Tx :: atom() | pid(), Msg :: term() ) -> ok | {error, pass_error()}.
 pass( Tx, Msg ) when is_pid( Tx ) orelse is_atom( Tx ) -> gen_server:call( Tx, {pass, Msg}, infinity ).
 
 
